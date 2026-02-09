@@ -5,16 +5,29 @@
 
 set -euo pipefail
 
-EXTENSION_VERSION="1.1.0"
+EXTENSION_VERSION="1.2.0"
 REPO="Probably-Group/Dev-AID"
 
-# Protected paths that are never overwritten during update
+# Protected paths — never overwritten or deleted during update
+# These contain project-specific data, user credentials, or expensive-to-rebuild artifacts
 PROTECTED_PATHS=(
+    # User credentials & config
     "config/.env"
+    "config/.env.*"
     "config/settings.json"
     "config/core-skills.local.json"
+    # Project knowledge
     "memory-bank/"
     "logs/"
+    # Expensive to rebuild (venvs, RAG indices)
+    "orchestration/venv/"
+    "local-search/venv/"
+    "local-search/index/"
+    "deep-research/venv/"
+    # Temp/cache (harmless to keep)
+    "temp/"
+    # User backups
+    "backups/"
 )
 
 # --- Helpers ---
