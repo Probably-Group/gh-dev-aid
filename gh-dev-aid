@@ -4,13 +4,14 @@
 # Usage:   gh dev-aid <command> [args]
 
 set -euo pipefail
+IFS=$'\n\t'
 
-EXTENSION_VERSION="1.2.0"
-REPO="Probably-Group/Dev-AID"
+readonly EXTENSION_VERSION="1.2.0"
+readonly REPO="Probably-Group/Dev-AID"
 
 # Protected paths — never overwritten or deleted during update
 # These contain project-specific data, user credentials, or expensive-to-rebuild artifacts
-PROTECTED_PATHS=(
+readonly -a PROTECTED_PATHS=(
     # User credentials & config
     "config/.env"
     "config/.env.*"
@@ -29,6 +30,14 @@ PROTECTED_PATHS=(
     # User backups
     "backups/"
 )
+
+# --- Cleanup ---
+
+TEMP_DIR=""
+cleanup() {
+    rm -rf -- "${TEMP_DIR:-}"
+}
+trap cleanup EXIT
 
 # --- Helpers ---
 
@@ -50,7 +59,7 @@ need_cmd() {
 }
 
 find_dev_aid() {
-    if [ -d ".dev-aid" ]; then
+    if [[ -d ".dev-aid" ]]; then
         echo "."
     else
         die ".dev-aid/ not found in current directory. Run 'gh dev-aid init' first."
@@ -58,8 +67,8 @@ find_dev_aid() {
 }
 
 get_local_version() {
-    if [ -f ".dev-aid/VERSION" ]; then
-        cat .dev-aid/VERSION | tr -d '[:space:]'
+    if [[ -f ".dev-aid/VERSION" ]]; then
+        tr -d '[:space:]' < .dev-aid/VERSION
     else
         echo "unknown"
     fi
@@ -67,8 +76,8 @@ get_local_version() {
 
 get_remote_version() {
     local tmpdir="$1"
-    if [ -f "$tmpdir/Dev-AID/.dev-aid/VERSION" ]; then
-        cat "$tmpdir/Dev-AID/.dev-aid/VERSION" | tr -d '[:space:]'
+    if [[ -f "${tmpdir}/Dev-AID/.dev-aid/VERSION" ]]; then
+        tr -d '[:space:]' < "${tmpdir}/Dev-AID/.dev-aid/VERSION"
     else
         echo "unknown"
     fi
@@ -78,32 +87,29 @@ get_remote_version() {
 
 cmd_init() {
     local target_path="${1:-.}"
-    target_path="$(cd "$target_path" && pwd)"
+    target_path="$(cd "${target_path}" && pwd)"
 
-    if [ -d "$target_path/.dev-aid" ]; then
-        die ".dev-aid/ already exists in $target_path. Use 'gh dev-aid update' instead."
+    if [[ -d "${target_path}/.dev-aid" ]]; then
+        die ".dev-aid/ already exists in ${target_path}. Use 'gh dev-aid update' instead."
     fi
 
     need_cmd gh
 
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$tmpdir'" EXIT
+    TEMP_DIR="$(mktemp -d)"
 
     info "Cloning Dev-AID..."
-    gh repo clone "$REPO" "$tmpdir/Dev-AID" -- --depth 1 --quiet
+    gh repo clone "${REPO}" "${TEMP_DIR}/Dev-AID" -- --depth 1 --quiet
 
-    info "Copying .dev-aid/ to $target_path..."
-    cp -r "$tmpdir/Dev-AID/.dev-aid" "$target_path/.dev-aid"
+    info "Copying .dev-aid/ to ${target_path}..."
+    cp -r "${TEMP_DIR}/Dev-AID/.dev-aid" "${target_path}/.dev-aid"
 
     info "Initializing Dev-AID..."
-    (cd "$target_path" && ./.dev-aid/scripts/init-repo.sh)
+    (cd "${target_path}" && ./.dev-aid/scripts/init-repo.sh)
 
-    info "Done! Dev-AID is ready in $target_path"
+    info "Done! Dev-AID is ready in ${target_path}"
     echo ""
     echo "Next steps:"
-    echo "  cd $target_path"
+    echo "  cd ${target_path}"
     echo "  claude    # or gemini, cursor, windsurf, etc."
     echo "  /aid-help # see all available commands"
 }
@@ -115,79 +121,85 @@ cmd_update() {
 
     local local_version
     local_version="$(get_local_version)"
-    info "Current version: $local_version"
+    info "Current version: ${local_version}"
 
     # Clone latest
-    local tmpdir
-    tmpdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$tmpdir'" EXIT
+    TEMP_DIR="$(mktemp -d)"
 
     info "Fetching latest Dev-AID..."
-    gh repo clone "$REPO" "$tmpdir/Dev-AID" -- --depth 1 --quiet
+    gh repo clone "${REPO}" "${TEMP_DIR}/Dev-AID" -- --depth 1 --quiet
 
     local remote_version
-    remote_version="$(get_remote_version "$tmpdir")"
-    info "Latest version:  $remote_version"
+    remote_version="$(get_remote_version "${TEMP_DIR}")"
+    info "Latest version:  ${remote_version}"
 
-    if [ "$local_version" = "$remote_version" ] && [ "$local_version" != "unknown" ]; then
+    if [[ "${local_version}" == "${remote_version}" ]] && [[ "${local_version}" != "unknown" ]]; then
         echo ""
-        echo "Already up to date ($local_version)."
+        echo "Already up to date (${local_version})."
         return 0
     fi
 
     # Create backup
-    local backup_dir=".dev-aid-backup-$(date +%Y%m%d-%H%M%S)"
-    info "Creating backup at $backup_dir..."
-    cp -r .dev-aid "$backup_dir"
+    local backup_dir
+    backup_dir=".dev-aid-backup-$(date +%Y%m%d-%H%M%S)"
+    info "Creating backup at ${backup_dir}..."
+    cp -r .dev-aid "${backup_dir}"
 
     # Build rsync exclude list for protected paths
     local exclude_args=()
     for path in "${PROTECTED_PATHS[@]}"; do
-        exclude_args+=(--exclude "$path")
+        exclude_args+=(--exclude "${path}")
     done
 
     # Apply update
-    info "Updating .dev-aid/ ($local_version -> $remote_version)..."
-    rsync -a --delete "${exclude_args[@]}" "$tmpdir/Dev-AID/.dev-aid/" ".dev-aid/"
+    info "Updating .dev-aid/ (${local_version} -> ${remote_version})..."
+    rsync -a --delete "${exclude_args[@]}" "${TEMP_DIR}/Dev-AID/.dev-aid/" ".dev-aid/"
 
     echo ""
-    echo "Updated: $local_version -> $remote_version"
-    echo "Backup:  $backup_dir"
+    echo "Updated: ${local_version} -> ${remote_version}"
+    echo "Backup:  ${backup_dir}"
     echo ""
-    echo "To rollback: rm -rf .dev-aid && mv $backup_dir .dev-aid"
+    echo "To rollback: rm -rf .dev-aid && mv ${backup_dir} .dev-aid"
 
     # Cleanup old backups (keep last 3)
-    # shellcheck disable=SC2012
-    ls -dt .dev-aid-backup-* 2>/dev/null | tail -n +4 | while read -r old; do
-        info "Removing old backup: $old"
-        rm -rf "$old"
+    # Glob sorts alphabetically, which is chronological for YYYYMMDD-HHMMSS names
+    local -a old_backups=()
+    for d in .dev-aid-backup-*; do
+        [[ -d "${d}" ]] && old_backups+=("${d}")
     done
+    local total="${#old_backups[@]}"
+    if [[ "${total}" -gt 3 ]]; then
+        local i
+        for ((i = 0; i <= total - 4; i++)); do
+            info "Removing old backup: ${old_backups[i]}"
+            rm -rf -- "${old_backups[i]}"
+        done
+    fi
 }
 
 cmd_check() {
     need_cmd gh
 
     local local_version="unknown"
-    if [ -f ".dev-aid/VERSION" ]; then
+    if [[ -f ".dev-aid/VERSION" ]]; then
         local_version="$(get_local_version)"
     fi
 
     # Fetch remote VERSION file without cloning the whole repo
     local remote_version
-    remote_version="$(gh api "repos/$REPO/contents/.dev-aid/VERSION" --jq '.content' 2>/dev/null | base64 -d | tr -d '[:space:]')" || remote_version="unknown"
+    remote_version="$(gh api "repos/${REPO}/contents/.dev-aid/VERSION" --jq '.content' 2>/dev/null | base64 -d | tr -d '[:space:]')" || remote_version="unknown"
 
-    echo "Installed: $local_version"
-    echo "Latest:    $remote_version"
+    echo "Installed: ${local_version}"
+    echo "Latest:    ${remote_version}"
 
-    if [ "$local_version" = "unknown" ]; then
+    if [[ "${local_version}" == "unknown" ]]; then
         echo ""
         echo "Dev-AID not found. Run: gh dev-aid init"
         return 1
-    elif [ "$remote_version" = "unknown" ]; then
+    elif [[ "${remote_version}" == "unknown" ]]; then
         warn "Could not fetch latest version"
         return 1
-    elif [ "$local_version" != "$remote_version" ]; then
+    elif [[ "${local_version}" != "${remote_version}" ]]; then
         echo ""
         echo "Update available! Run: gh dev-aid update"
         return 0
@@ -203,7 +215,7 @@ cmd_status() {
 
     echo "Dev-AID version: $(get_local_version)"
 
-    if [ -x ".dev-aid/scripts/dev-aid-health.sh" ]; then
+    if [[ -x ".dev-aid/scripts/dev-aid-health.sh" ]]; then
         echo ""
         ./.dev-aid/scripts/dev-aid-health.sh
     fi
@@ -212,7 +224,7 @@ cmd_status() {
 cmd_version() {
     echo "gh-dev-aid extension: v${EXTENSION_VERSION}"
 
-    if [ -f ".dev-aid/VERSION" ]; then
+    if [[ -f ".dev-aid/VERSION" ]]; then
         echo "Dev-AID installed:    v$(get_local_version)"
     else
         echo "Dev-AID installed:    not found (run 'gh dev-aid init')"
