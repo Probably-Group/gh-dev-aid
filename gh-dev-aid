@@ -100,8 +100,26 @@ cmd_init() {
     info "Cloning Dev-AID..."
     gh repo clone "${REPO}" "${TEMP_DIR}/Dev-AID" -- --depth 1 --quiet
 
+    # Capture VERSION + commit SHA so the user can verify exactly which
+    # build of Dev-AID they got. Without this, users have no way to tell
+    # whether their `gh dev-aid init` got the latest fixes or an older
+    # commit (especially during rapid iteration on the upstream repo).
+    local cloned_version cloned_sha
+    cloned_version="$(tr -d '[:space:]' < "${TEMP_DIR}/Dev-AID/.dev-aid/VERSION" 2>/dev/null || echo "unknown")"
+    cloned_sha="$(cd "${TEMP_DIR}/Dev-AID" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+    info "Installing Dev-AID ${cloned_version} (commit ${cloned_sha})"
+
     info "Copying .dev-aid/ to ${target_path}..."
     cp -r "${TEMP_DIR}/Dev-AID/.dev-aid" "${target_path}/.dev-aid"
+
+    # Drop a marker file so the user can verify after install which
+    # commit they got, even after the temp clone is cleaned up.
+    {
+        echo "version=${cloned_version}"
+        echo "commit=${cloned_sha}"
+        echo "installed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo "extension_version=${EXTENSION_VERSION}"
+    } > "${target_path}/.dev-aid/.install-info"
 
     info "Initializing Dev-AID..."
     (cd "${target_path}" && ./.dev-aid/scripts/init-repo.sh)
